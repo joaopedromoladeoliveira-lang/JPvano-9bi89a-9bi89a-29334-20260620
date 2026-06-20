@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <title>JPvano Admin Ultra</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
+
+  <style>
+    body {
+      font-family: Arial;
+      background: #0d0d0d;
+      color: white;
+      padding: 20px;
+    }
+
+    .card {
+      background: #1a1a1a;
+      padding: 15px;
+      margin-bottom: 10px;
+      border-radius: 10px;
+    }
+
+    input, button {
+      width: 100%;
+      padding: 10px;
+      margin-top: 5px;
+      border-radius: 6px;
+      border: none;
+    }
+
+    button {
+      background: #00ff88;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    .danger { background: #ff3b3b; }
+  </style>
+</head>
+
+<body>
+
+<h2>🛡 JPvano ADMIN ULTRA</h2>
+<p>Admin Master: <b id="adminEmail"></b></p>
+
+<div class="card">
+  <h3>🔎 Usuários</h3>
+  <button onclick="loadUsers()">Carregar usuários</button>
+  <div id="users"></div>
+</div>
+
+<div class="card">
+  <h3>✔ Verificar usuário</h3>
+  <input id="verify" placeholder="email ou username">
+  <button onclick="verifyUser()">Dar verificado</button>
+</div>
+
+<div class="card">
+  <h3>👑 Promover admin</h3>
+  <input id="promote" placeholder="email">
+  <button onclick="promoteUser()">Promover</button>
+</div>
+
+<div class="card">
+  <h3>🚫 Banir usuário</h3>
+  <input id="ban" placeholder="email">
+  <button class="danger" onclick="banUser()">Banir</button>
+</div>
+
+<script>
+const SUPABASE_URL = "https://dasfxamaybhmovgsdaxj.supabase.co";
+const SUPABASE_KEY = "SUA_ANON_KEY_AQUI";
+
+const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const ADMIN_EMAIL = "jpvanoredesocial@gmail.com";
+document.getElementById("adminEmail").innerText = ADMIN_EMAIL;
+
+/* 🔎 LISTAR USERS */
+async function loadUsers() {
+  let { data } = await supabase.from("profiles").select("*");
+
+  let html = "";
+  data.forEach(u => {
+    html += `
+      <div class="card">
+        <b>${u.email}</b><br>
+        role: ${u.role} | verified: ${u.verified} | banned: ${u.banned}
+      </div>
+    `;
+  });
+
+  document.getElementById("users").innerHTML = html;
+}
+
+/* ✔ VERIFICAR */
+async function verifyUser() {
+  const email = document.getElementById("verify").value;
+
+  await supabase
+    .from("profiles")
+    .update({ verified: true })
+    .eq("email", email);
+
+  await log("verify", email);
+  alert("Usuário verificado!");
+}
+
+/* 👑 PROMOVER ADMIN */
+async function promoteUser() {
+  const email = document.getElementById("promote").value;
+
+  await supabase
+    .from("profiles")
+    .update({ role: "admin" })
+    .eq("email", email);
+
+  await log("promote_admin", email);
+  alert("Usuário promovido!");
+}
+
+/* 🚫 BAN */
+async function banUser() {
+  const email = document.getElementById("ban").value;
+
+  await supabase
+    .from("profiles")
+    .update({ banned: true })
+    .eq("email", email);
+
+  await log("ban", email);
+  alert("Usuário banido!");
+}
+
+/* 🧠 LOGS */
+async function log(action, target) {
+  await supabase.from("admin_logs").insert([{
+    admin_email: ADMIN_EMAIL,
+    action,
+    target_user: target
+  }]);
+}
+</script>
+
+</body>
+</html>
