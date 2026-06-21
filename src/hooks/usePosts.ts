@@ -10,50 +10,73 @@ import { extractHashtags } from '@/lib/utils';
 
 export const POSTS_EVENT = 'jpvano:posts_updated';
 
+/** Broadcast to same tab + all other tabs/windows */
 export function broadcastPostsUpdate() {
   window.dispatchEvent(new Event(POSTS_EVENT));
-  // Cross-tab broadcast via localStorage
-  localStorage.setItem('jpvano:posts_ts', Date.now().toString());
+  try {
+    localStorage.setItem('jpvano:posts_ts', Date.now().toString());
+  } catch (_) {}
 }
 
-export function usePosts(filterUserId?: string) {
+interface UsePostsOptions {
+  /** Filter by a specific user; omit for GLOBAL feed (all users) */
+  filterUserId?: string;
+  /** How many posts to fetch */
+  limit?: number;
+  /** Poll interval in ms; default 5000 */
+  pollInterval?: number;
+}
+
+export function usePosts(options: UsePostsOptions = {}) {
+  const { filterUserId, limit = 50, pollInterval = 5000 } = options;
   const { user } = useAuth();
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
   const lastFetchRef = useRef<number>(0);
+  const isMountedRef = useRef(true);
 
-  const refreshPosts = useCallback(async () => {
+  const refreshPosts = useCallback(async (force = false) => {
     const now = Date.now();
-    // Throttle: don't refetch if last fetch was < 2s ago
-    if (now - lastFetchRef.current < 2000) return;
+    // Throttle rapid successive calls — but always run if forced
+    if (!force && now - lastFetchRef.current < 2000) return;
     lastFetchRef.current = now;
 
-    const data = await getPosts({ userId: filterUserId, limit: 50 });
-    setPosts(data);
-    setLoading(false);
-  }, [filterUserId]);
+    const data = await getPosts({ userId: filterUserId, limit });
+    if (isMountedRef.current) {
+      setPosts(data);
+      setLoading(false);
+    }
+  }, [filterUserId, limit]);
 
+  // Initial load
   useEffect(() => {
-    refreshPosts();
+    isMountedRef.current = true;
+    refreshPosts(true);
+    return () => { isMountedRef.current = false; };
   }, [refreshPosts]);
 
-  // Real-time: poll every 5s + same-tab event + cross-tab storage event
+  // Real-time sync:
+  //  1. Same-tab event (post created/deleted in this tab)
+  //  2. Cross-tab storage event (post created in another tab/window)
+  //  3. Global polling every `pollInterval` ms (catches remote users)
   useEffect(() => {
-    const handleUpdate = () => refreshPosts();
+    const handleEvent = () => refreshPosts(true);
     const handleStorage = (e: StorageEvent) => {
-      if (e.key === 'jpvano:posts_ts') refreshPosts();
+      if (e.key === 'jpvano:posts_ts') refreshPosts(true);
     };
 
-    window.addEventListener(POSTS_EVENT, handleUpdate);
+    window.addEventListener(POSTS_EVENT, handleEvent);
     window.addEventListener('storage', handleStorage);
-    const interval = setInterval(refreshPosts, 5000);
+    const interval = setInterval(() => refreshPosts(), pollInterval);
 
     return () => {
-      window.removeEventListener(POSTS_EVENT, handleUpdate);
+      window.removeEventListener(POSTS_EVENT, handleEvent);
       window.removeEventListener('storage', handleStorage);
       clearInterval(interval);
     };
-  }, [refreshPosts]);
+  }, [refreshPosts, pollInterval]);
+
+  // ── Actions ──────────────────────────────────────────────────────────────
 
   const toggleLike = useCallback(async (postId: string) => {
     if (!user) return;
@@ -135,7 +158,9 @@ export function usePosts(filterUserId?: string) {
       location: postData.location,
     });
     if (post) {
+      // Prepend to local state immediately (optimistic)
       setPosts(prev => [post, ...prev]);
+      // Notify all tabs/windows about the new post
       broadcastPostsUpdate();
     }
     return post;

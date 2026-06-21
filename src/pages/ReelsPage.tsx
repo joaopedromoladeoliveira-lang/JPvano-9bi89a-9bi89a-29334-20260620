@@ -1,75 +1,79 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FilmIcon, HeartIcon, MessageCircleIcon, Share2Icon, VolumeXIcon, Volume2Icon } from 'lucide-react';
+import { FilmIcon, HeartIcon, MessageCircleIcon, Share2Icon, VolumeXIcon, Volume2Icon, GlobeIcon } from 'lucide-react';
 import { Layout } from '@/components/layout/Layout';
 import { UserAvatar } from '@/components/features/UserAvatar';
 import { VerifiedBadge } from '@/components/features/VerifiedBadge';
 import { useAuth } from '@/hooks/useAuth';
-import { getPosts, getProfile, toggleLike as dbToggleLike } from '@/lib/db';
+import { getProfile, toggleLike as dbToggleLike } from '@/lib/db';
+import { usePosts, broadcastPostsUpdate } from '@/hooks/usePosts';
 import { formatNumber } from '@/lib/utils';
-import { broadcastPostsUpdate } from '@/hooks/usePosts';
 import type { Post, User } from '@/types';
 import { cn } from '@/lib/utils';
 
 export default function ReelsPage() {
   const navigate = useNavigate();
   const { user, isAuthenticated, isLoading } = useAuth();
-  const [posts, setPosts] = useState<Post[]>([]);
+
+  // Global feed — all posts from all users, polled every 5s
+  const { posts: allPosts, toggleLike } = usePosts({ limit: 100, pollInterval: 5000 });
+
   const [authors, setAuthors] = useState<Map<string, User>>(new Map());
   const [activeIndex, setActiveIndex] = useState(0);
   const [muted, setMuted] = useState(true);
-
-  const loadPosts = async () => {
-    const all = await getPosts({ limit: 50 });
-    setPosts(all);
-    // Load authors
-    const ids = [...new Set(all.map(p => p.userId))];
-    const map = new Map<string, User>();
-    await Promise.all(ids.map(id => getProfile(id).then(p => { if (p) map.set(id, p); })));
-    setAuthors(map);
-  };
+  const videoRefs = useRef<Map<string, HTMLVideoElement>>(new Map());
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) navigate('/login');
-    loadPosts();
   }, [isAuthenticated, isLoading, navigate]);
 
+  // Load author profiles for all posts
   useEffect(() => {
-    const handler = () => loadPosts();
-    window.addEventListener('jpvano:posts_updated', handler);
-    const interval = setInterval(loadPosts, 5000);
-    return () => { window.removeEventListener('jpvano:posts_updated', handler); clearInterval(interval); };
-  }, []);
+    if (allPosts.length === 0) return;
+    const ids = [...new Set(allPosts.map(p => p.userId))];
+    const missing = ids.filter(id => !authors.has(id));
+    if (missing.length === 0) return;
+    Promise.all(missing.map(id => getProfile(id))).then(profiles => {
+      setAuthors(prev => {
+        const next = new Map(prev);
+        profiles.forEach((p, i) => { if (p) next.set(missing[i], p); });
+        return next;
+      });
+    });
+  }, [allPosts]);
+
+  // Control video playback based on active slide
+  useEffect(() => {
+    videoRefs.current.forEach((vid, postId) => {
+      const postIndex = allPosts.findIndex(p => p.id === postId);
+      if (postIndex === activeIndex) {
+        vid.play().catch(() => {});
+      } else {
+        vid.pause();
+        vid.currentTime = 0;
+      }
+    });
+  }, [activeIndex, allPosts]);
 
   function handleScroll(e: React.UIEvent<HTMLDivElement>) {
     const container = e.currentTarget;
     const index = Math.round(container.scrollTop / container.clientHeight);
-    setActiveIndex(index);
+    if (index !== activeIndex) setActiveIndex(index);
   }
 
-  async function handleLike(post: Post) {
-    if (!user) return;
-    const isLiked = post.likes.includes(user.id);
-    const newLikes = isLiked ? post.likes.filter(id => id !== user.id) : [...post.likes, user.id];
-    setPosts(prev => prev.map(p => p.id === post.id ? { ...p, likes: newLikes } : p));
-    await dbToggleLike(post.id, user.id, isLiked);
-    broadcastPostsUpdate();
-  }
+  if (isLoading) return null;
 
-  const PLACEHOLDER_MEDIA = [
-    'https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=400&h=700&fit=crop',
-    'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=400&h=700&fit=crop',
-    'https://images.unsplash.com/photo-1476224203421-9ac39bcb3327?w=400&h=700&fit=crop',
-    'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=400&h=700&fit=crop',
-  ];
-
-  if (posts.length === 0) {
+  if (allPosts.length === 0) {
     return (
       <Layout>
         <div className="flex flex-col items-center justify-center h-[80vh] gap-4 dark:text-gray-400 text-gray-600">
           <FilmIcon size={48} className="opacity-30" />
           <p className="text-lg font-semibold dark:text-white text-gray-900">Nenhuma publicação ainda</p>
           <p className="text-sm">Publique algo no feed para aparecer aqui!</p>
+          <div className="flex items-center gap-2 mt-2 text-xs">
+            <GlobeIcon size={12} className="text-brand-pink" />
+            <span>Feed global — sincronizado com todos os usuários</span>
+          </div>
         </div>
       </Layout>
     );
@@ -77,57 +81,145 @@ export default function ReelsPage() {
 
   return (
     <Layout>
-      <div className="h-screen overflow-y-scroll snap-y snap-mandatory no-scrollbar" onScroll={handleScroll}>
-        {posts.map((post, i) => {
+      <div
+        className="h-screen overflow-y-scroll snap-y snap-mandatory no-scrollbar"
+        onScroll={handleScroll}
+      >
+        {allPosts.map((post, i) => {
           const author = authors.get(post.userId);
           const isLiked = user ? post.likes.includes(user.id) : false;
-          const mediaUrl = post.media[0] || PLACEHOLDER_MEDIA[i % PLACEHOLDER_MEDIA.length];
+          const isVideo = post.type === 'video' || post.type === 'reel';
+          const mediaUrl = post.media[0];
 
           return (
-            <div key={post.id} className="relative h-screen snap-start flex items-center justify-center dark:bg-black bg-gray-900 overflow-hidden">
-              <img src={mediaUrl} alt="" className="absolute inset-0 w-full h-full object-cover" />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
+            <div
+              key={post.id}
+              className="relative h-screen snap-start flex items-center justify-center dark:bg-black bg-gray-900 overflow-hidden"
+            >
+              {/* Media */}
+              {mediaUrl ? (
+                isVideo ? (
+                  <video
+                    ref={el => { if (el) videoRefs.current.set(post.id, el); else videoRefs.current.delete(post.id); }}
+                    src={mediaUrl}
+                    className="absolute inset-0 w-full h-full object-cover"
+                    muted={muted}
+                    loop
+                    playsInline
+                    autoPlay={i === 0}
+                  />
+                ) : (
+                  <img
+                    src={mediaUrl}
+                    alt=""
+                    className="absolute inset-0 w-full h-full object-cover"
+                    loading={i < 3 ? 'eager' : 'lazy'}
+                  />
+                )
+              ) : (
+                <div className="absolute inset-0 flex items-center justify-center p-8"
+                  style={{ background: 'linear-gradient(135deg, #1a0a2e, #0d001a)' }}>
+                  <p className="text-white text-lg font-bold text-center leading-relaxed">{post.content}</p>
+                </div>
+              )}
 
+              {/* Gradient overlay */}
+              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/20 pointer-events-none" />
+
+              {/* Post info — bottom left */}
               <div className="absolute bottom-20 md:bottom-8 left-4 right-16 z-10">
                 {author && (
-                  <div className="flex items-center gap-2 mb-3 cursor-pointer" onClick={() => navigate(`/perfil/${author.username}`)}>
+                  <button
+                    className="flex items-center gap-2 mb-3"
+                    onClick={() => navigate(`/perfil/${author.username}`)}
+                  >
                     <UserAvatar src={author.avatar} name={author.displayName} size="sm" />
                     <span className="text-white font-semibold text-sm">{author.displayName}</span>
                     {author.isVerified && <VerifiedBadge size="xs" />}
-                    <button
-                      className="ml-2 px-3 py-1 rounded-full border border-white text-white text-xs font-medium hover:bg-white hover:text-black transition-all"
-                      onClick={e => { e.stopPropagation(); navigate(`/perfil/${author.username}`); }}
-                    >Seguir</button>
-                  </div>
+                    <span className="ml-1 px-2.5 py-0.5 rounded-full border border-white/70 text-white text-xs font-medium hover:bg-white hover:text-black transition-all">
+                      Seguir
+                    </span>
+                  </button>
                 )}
-                <p className="text-white text-sm leading-relaxed line-clamp-3">{post.content}</p>
-                {post.hashtags.slice(0, 3).map(tag => (
-                  <span key={tag} className="text-brand-pink text-sm mr-1">{tag}</span>
-                ))}
+                {post.content && (
+                  <p className="text-white text-sm leading-relaxed line-clamp-3 mb-1">{post.content}</p>
+                )}
+                <div className="flex flex-wrap gap-1">
+                  {post.hashtags.slice(0, 3).map(tag => (
+                    <span key={tag} className="text-brand-pink text-xs font-medium">{tag}</span>
+                  ))}
+                </div>
               </div>
 
+              {/* Action buttons — right */}
               <div className="absolute right-3 bottom-32 md:bottom-20 z-10 flex flex-col items-center gap-5">
-                <button onClick={() => handleLike(post)} className="flex flex-col items-center gap-1">
-                  <HeartIcon size={28} className={cn('transition-all', isLiked ? 'fill-red-500 text-red-500' : 'text-white')} />
-                  <span className="text-white text-xs font-medium">{formatNumber(post.likes.length)}</span>
+                <button
+                  onClick={() => toggleLike(post.id)}
+                  className="flex flex-col items-center gap-1 group"
+                >
+                  <div className={cn(
+                    'w-11 h-11 rounded-full flex items-center justify-center transition-all group-active:scale-90',
+                    isLiked ? 'bg-red-500/20' : 'bg-black/30 hover:bg-black/50'
+                  )}>
+                    <HeartIcon
+                      size={24}
+                      className={cn('transition-all', isLiked ? 'fill-red-500 text-red-500' : 'text-white')}
+                    />
+                  </div>
+                  <span className="text-white text-xs font-semibold drop-shadow">
+                    {formatNumber(post.likes.length)}
+                  </span>
                 </button>
-                <button className="flex flex-col items-center gap-1" onClick={() => navigate(`/post/${post.id}`)}>
-                  <MessageCircleIcon size={28} className="text-white" />
-                  <span className="text-white text-xs font-medium">{formatNumber(post.comments.length)}</span>
+
+                <button
+                  className="flex flex-col items-center gap-1 group"
+                  onClick={() => navigate(`/post/${post.id}`)}
+                >
+                  <div className="w-11 h-11 rounded-full bg-black/30 hover:bg-black/50 flex items-center justify-center transition-all group-active:scale-90">
+                    <MessageCircleIcon size={24} className="text-white" />
+                  </div>
+                  <span className="text-white text-xs font-semibold drop-shadow">
+                    {formatNumber(post.comments.length)}
+                  </span>
                 </button>
-                <button className="flex flex-col items-center gap-1">
-                  <Share2Icon size={26} className="text-white" />
-                  <span className="text-white text-xs font-medium">{formatNumber(post.shares)}</span>
+
+                <button className="flex flex-col items-center gap-1 group">
+                  <div className="w-11 h-11 rounded-full bg-black/30 hover:bg-black/50 flex items-center justify-center transition-all group-active:scale-90">
+                    <Share2Icon size={22} className="text-white" />
+                  </div>
+                  <span className="text-white text-xs font-semibold drop-shadow">
+                    {formatNumber(post.shares)}
+                  </span>
                 </button>
-                <button onClick={() => setMuted(!muted)} className="p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-all">
-                  {muted ? <VolumeXIcon size={20} /> : <Volume2Icon size={20} />}
+
+                <button
+                  onClick={() => setMuted(!muted)}
+                  className="w-11 h-11 rounded-full bg-black/30 hover:bg-black/50 flex items-center justify-center transition-all"
+                >
+                  {muted
+                    ? <VolumeXIcon size={20} className="text-white" />
+                    : <Volume2Icon size={20} className="text-white" />
+                  }
                 </button>
               </div>
 
+              {/* Progress dots */}
               <div className="absolute right-3 top-1/2 -translate-y-1/2 z-10 flex flex-col gap-1.5">
-                {posts.slice(0, 8).map((_, dotIdx) => (
-                  <div key={dotIdx} className={cn('w-1 rounded-full transition-all', dotIdx === i ? 'h-6 bg-white' : 'h-1.5 bg-white/30')} />
+                {allPosts.slice(0, Math.min(allPosts.length, 8)).map((_, dotIdx) => (
+                  <div
+                    key={dotIdx}
+                    className={cn(
+                      'w-1 rounded-full transition-all duration-300',
+                      dotIdx === i ? 'h-6 bg-white' : 'h-1.5 bg-white/30'
+                    )}
+                  />
                 ))}
+              </div>
+
+              {/* Index indicator */}
+              <div className="absolute top-4 left-4 z-10 flex items-center gap-1.5 bg-black/40 rounded-full px-2.5 py-1">
+                <GlobeIcon size={10} className="text-green-400" />
+                <span className="text-[10px] text-white/80 font-medium">{i + 1} / {allPosts.length}</span>
               </div>
             </div>
           );

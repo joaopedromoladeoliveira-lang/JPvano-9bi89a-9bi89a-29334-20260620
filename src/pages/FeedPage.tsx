@@ -12,14 +12,26 @@ import { usePosts } from '@/hooks/usePosts';
 import { getStories, createStory, getAllProfiles } from '@/lib/db';
 import { formatNumber } from '@/lib/utils';
 import type { Story, User } from '@/types';
-import { TrendingUpIcon, RefreshCwIcon } from 'lucide-react';
+import { TrendingUpIcon, RefreshCwIcon, GlobeIcon } from 'lucide-react';
 
 const TRENDING = ['#JPvano', '#Fotografia', '#Culinária', '#Dev', '#Fitness', '#BrasilConnect'];
 
 export default function FeedPage() {
   const navigate = useNavigate();
   const { user, isAuthenticated, isLoading } = useAuth();
-  const { posts, loading: postsLoading, refreshPosts, toggleLike, addComment, toggleSave, deletePost, createPost } = usePosts();
+
+  // ── GLOBAL FEED — no userId filter = all posts from every user in the world ──
+  const {
+    posts,
+    loading: postsLoading,
+    refreshPosts,
+    toggleLike,
+    addComment,
+    toggleSave,
+    deletePost,
+    createPost,
+  } = usePosts({ limit: 50, pollInterval: 5000 });
+
   const [stories, setStories] = useState<Story[]>([]);
   const [suggestedUsers, setSuggestedUsers] = useState<User[]>([]);
   const [showCreatePost, setShowCreatePost] = useState(false);
@@ -72,7 +84,7 @@ export default function FeedPage() {
 
   async function handleManualRefresh() {
     setRefreshing(true);
-    await refreshPosts();
+    await refreshPosts(true);
     setRefreshing(false);
   }
 
@@ -106,10 +118,23 @@ export default function FeedPage() {
               <button
                 onClick={handleManualRefresh}
                 className="p-2 rounded-xl dark:hover:bg-white/10 hover:bg-gray-100 dark:text-gray-500 text-gray-400 transition-all"
-                title="Atualizar feed"
+                title="Atualizar feed global"
               >
                 <RefreshCwIcon size={16} className={refreshing ? 'animate-spin text-brand-pink' : ''} />
               </button>
+            </div>
+
+            {/* Global feed badge */}
+            <div className="flex items-center gap-2 px-1">
+              <div className="flex items-center gap-1.5 dark:text-gray-500 text-gray-400 text-xs">
+                <GlobeIcon size={12} className="text-brand-pink" />
+                <span>Feed global — publicações de todos os usuários</span>
+              </div>
+              <div className="flex-1 h-px dark:bg-white/5 bg-gray-100" />
+              <div className="flex items-center gap-1 text-xs dark:text-gray-600 text-gray-400">
+                <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                Ao vivo
+              </div>
             </div>
 
             {/* Posts */}
@@ -119,9 +144,13 @@ export default function FeedPage() {
               </div>
             ) : posts.length === 0 ? (
               <div className="text-center py-20 dark:bg-surface-800 bg-white rounded-2xl border dark:border-white/5 border-gray-100">
-                <div className="text-6xl mb-4">📸</div>
-                <h3 className="text-xl font-bold dark:text-white text-gray-900 mb-2">Seu feed está vazio</h3>
-                <p className="dark:text-gray-400 text-gray-600 mb-6">Publique algo ou explore pessoas para seguir</p>
+                <div className="text-6xl mb-4">🌍</div>
+                <h3 className="text-xl font-bold dark:text-white text-gray-900 mb-2">
+                  Seja o primeiro no JPvano!
+                </h3>
+                <p className="dark:text-gray-400 text-gray-600 mb-6 text-sm">
+                  Nenhuma publicação ainda. Crie a primeira publicação global!
+                </p>
                 <div className="flex gap-3 justify-center">
                   <button
                     onClick={() => setShowCreatePost(true)}
@@ -235,6 +264,18 @@ export default function FeedPage() {
                   </button>
                 ))}
               </div>
+            </div>
+
+            {/* Global indicator */}
+            <div className="dark:bg-surface-800 bg-white rounded-2xl p-4 border dark:border-white/5 border-gray-100">
+              <div className="flex items-center gap-2 mb-2">
+                <GlobeIcon size={15} className="text-green-500" />
+                <span className="text-sm font-bold dark:text-white text-gray-900">Feed Global</span>
+                <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse ml-auto" />
+              </div>
+              <p className="text-xs dark:text-gray-500 text-gray-400 leading-relaxed">
+                Você está vendo publicações de <strong className="dark:text-gray-300 text-gray-700">todos os usuários do mundo</strong> em tempo real.
+              </p>
             </div>
 
             <p className="text-xs dark:text-gray-700 text-gray-400 text-center">
