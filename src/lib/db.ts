@@ -275,10 +275,14 @@ export async function addComment(postId: string, userId: string, content: string
 }
 
 export async function incrementViewCount(postId: string): Promise<void> {
-  await supabase.rpc('increment_view_count', { post_id: postId }).catch(() => {
-    // fallback: direct update
-    supabase.from('posts').update({ view_count: supabase.rpc as any }).eq('id', postId);
-  });
+  const { error } = await supabase.rpc('increment_view_count', { post_id: postId });
+  if (error) {
+    // fallback: fetch current count and increment
+    const { data } = await supabase.from('posts').select('view_count').eq('id', postId).single();
+    if (data) {
+      await supabase.from('posts').update({ view_count: (data.view_count || 0) + 1 }).eq('id', postId);
+    }
+  }
 }
 
 // ─── Stories ─────────────────────────────────────────────────────────────────
